@@ -8,7 +8,7 @@
 #
 # REDCap is pulled ONCE (all hospitals, report period + previous period); each report
 # reads that copy. Only hospitals with at least one mother in the period get a report.
-# Output: output/<period>/<Hospital>_<period>.html|pdf, CIN-MNH_Network_<period>.*,
+# Output: output/<period>/CIN-MNH_<Hospital>_<period>.html|pdf, CIN-MNH_Network_<period>.*,
 # and batch_log.csv. The shared copy holds record-level data and is deleted at the end.
 
 suppressPackageStartupMessages({ library(lubridate) })
@@ -73,7 +73,7 @@ render_one <- function(hosp_param, file_stub) {
 
 jobs <- c(setNames(hospitals, hosp_cfg$short[match(hospitals, hosp_cfg$hosp_id)]), if (network) c(Network = "all"))
 log <- do.call(rbind, lapply(names(jobs), function(nm) {
-  stub <- if (jobs[[nm]] == "all") paste0("CIN-MNH_Network_", tag) else paste0(gsub("[^A-Za-z0-9]+", "_", nm), "_", tag)
+  stub <- if (jobs[[nm]] == "all") paste0("CIN-MNH_Network_", tag) else paste0("CIN-MNH_", gsub("[^A-Za-z0-9]+", "_", nm), "_", tag)
   message("Rendering ", nm, " ...")
   files <- render_one(jobs[[nm]], stub)
   data.frame(report = nm, hosp_id = jobs[[nm]],

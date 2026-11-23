@@ -11,6 +11,7 @@ params:
   end_date: ""
   good: 0.90           # >= good: green (optimal)
   caution: 0.70        # >= caution: amber (needs attention); below: red (critical)
+  show_disabled: false # true = keep rows for variables on disabled forms (shown as "Form disabled")
   cache: ""            # set by R/render_batch.R: one REDCap pull shared by all hospital reports
 format:
   html:
@@ -86,12 +87,13 @@ wk_lab <- vapply(seq_along(x$weeks), function(i) {
 }, "")
 disabled_rows <- x$rv$row[vapply(x$rv$fields_list, function(fs) {
   any(x$doc$disabled[x$doc$row %in% x$rv$row[vapply(x$rv$fields_list, identical, TRUE, fs)]]) }, TRUE)]
+hidden_rows <- if (isTRUE(params$show_disabled)) integer() else disabled_rows   # left out of both tables
 ```
 
 ::: {.callout-note appearance="simple"}
 **Hospital:** `r x$hospital` · **Period:** `r period_name(start, end)` · **Mothers recorded in REDCap:** `r x$n_mothers` (`r x$n_mothers_prior` in `r period_name(x$prior_start, x$prior_end)`)`r if (x$source == "synthetic") " · **SYNTHETIC TEST DATA: not real**" else ""`
 
-Each cell is the **% of mothers whose record documents the variable**, with *documented / expected* underneath. A variable is expected only where REDCap would show it, e.g. *referral type* only for referred mothers. `r chip(col_good, paste0("≥ ", params$good * 100, "% optimal"))` `r chip(col_caution, paste0(params$caution * 100, "–", params$good * 100 - 1, "% needs attention"))` `r chip(col_critical, paste0("< ", params$caution * 100, "% requires immediate action"))` `r chip(col_none, "– not expected that week / form disabled")`
+Each cell is the **% of mothers whose record documents the variable**, with *documented / expected* underneath. A variable is expected only where REDCap would show it, e.g. *referral type* only for referred mothers. `r chip(col_good, paste0("≥ ", params$good * 100, "% optimal"))` `r chip(col_caution, paste0(params$caution * 100, "–", params$good * 100 - 1, "% needs attention"))` `r chip(col_critical, paste0("< ", params$caution * 100, "% requires immediate action"))` `r chip(col_none, if (length(hidden_rows)) "– not expected that week" else "– not expected that week / form disabled")`
 :::
 
 ## Key takeaways for action
@@ -139,7 +141,7 @@ ggplot(vol, aes(i, n)) +
 ## Weekly documentation
 
 ```{r table}
-tb <- x$table |> left_join(x$rv |> select(row, section, label), by = "row") |>
+tb <- x$table |> filter(!row %in% hidden_rows) |> left_join(x$rv |> select(row, section, label), by = "row") |>
   mutate(disabled = row %in% disabled_rows, txt = cell(pct, n_documented, n_expected, disabled))
 wide <- tb |> select(row, section, label, week, txt) |>
   pivot_wider(names_from = week, values_from = txt) |> arrange(row)
@@ -182,7 +184,7 @@ if (isTRUE(x$network)) cat("\n## Documentation by hospital\n\n% documented for t
 ```{r by-hospital}
 if (isTRUE(x$network)) {
   hosp_cfg <- read_cfg("config/hospitals.csv")
-  bh <- period_summary(x$doc, x$rv, by_hosp = TRUE) |> filter(!is.na(hosp), hosp %in% hosp_cfg$hosp_id)
+  bh <- period_summary(x$doc, x$rv, by_hosp = TRUE) |> filter(!is.na(hosp), hosp %in% hosp_cfg$hosp_id, !row %in% hidden_rows)
   site_order <- bh |> filter(!is.na(ne)) |> group_by(hosp) |> summarise(p = sum(nd) / sum(ne), .groups = "drop") |> arrange(desc(p)) |> pull(hosp)
   mothers_site <- x$doc |> distinct(record_id, hosp) |> count(hosp)
   hw <- bh |> mutate(disabled = row %in% disabled_rows,
@@ -228,7 +230,9 @@ cat(sprintf("- **Documented** = a real answer. %s counts as documented (it is ho
 cat("- **Admissions per week:** a week is *low* when it has no mothers, or fewer than half of a typical week (the median of the full weeks, scaled to the days a partial week covers).\n")
 cat("- **Decision-to-delivery interval** counts as documented only when all four of the CS decision date, CS decision time, delivery date and delivery time are filled in.\n")
 if (length(dis_forms))
-  cat(sprintf("- **Form disabled:** the REDCap form display logic currently switches off **%s** (condition `1=2`), so their variables cannot be entered and are not expected. These are the report's labour, delivery and outcome sections; re-enabling the forms is the first step to documenting them.\n",
-              paste(dis_forms, collapse = ", ")))
+  cat(sprintf("- **Form disabled:** the REDCap form display logic currently switches off **%s** (condition `1=2`), so their variables cannot be entered and are not expected%s. These are the report's labour, delivery and outcome sections; re-enabling the forms is the first step to documenting them.\n",
+              paste(dis_forms, collapse = ", "),
+              if (length(hidden_rows)) sprintf("; their %d variable%s %s left out of the tables above", length(hidden_rows),
+                                               if (length(hidden_rows) > 1) "s" else "", if (length(hidden_rows) > 1) "are" else "is") else ""))
 cat(sprintf("- Source: %s, pulled %s.\n", if (x$source == "redcap") "CIN Standard Maternal Tool (REDCap, via REDCapR)" else "synthetic test data", format(x$pulled_at, "%d %b %Y %H:%M")))
 ```

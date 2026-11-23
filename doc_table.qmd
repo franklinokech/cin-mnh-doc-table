@@ -1,0 +1,198 @@
+---
+title: "CIN-MNH Maternity Documentation Report"
+subtitle: "Weekly documentation of the key report variables"
+date: today
+date-format: "D MMMM YYYY"
+params:
+  source: "redcap"     # "redcap" (live API) or "synthetic" (test data)
+  hospital: "91"       # hosp_id code, e.g. 91 = Lodwar, 72 = Pumwani; "all" = whole CIN-MNH network
+  month: ""            # report month YYYY-MM; "" = last full calendar month
+  start_date: ""       # optional custom period (YYYY-MM-DD); overrides month
+  end_date: ""
+  good: 0.90           # >= good: green (optimal)
+  caution: 0.70        # >= caution: amber (needs attention); below: red (critical)
+  cache: ""            # set by R/render_batch.R: one REDCap pull shared by all hospital reports
+format:
+  html:
+    embed-resources: true
+    theme: cosmo
+    mainfont: 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+    css: styles.css
+  typst:
+    template-partials:
+      - page.typ
+    include-before-body:
+      - text: |
+          #show table: set text(size: 7.5pt)
+          #set table(inset: (x: 3pt, y: 2pt))
+          #set par(justify: false)
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| include: false
+suppressPackageStartupMessages({ library(dplyr); library(tidyr); library(knitr); library(kableExtra); library(lubridate) })
+for (f in c("redcap_logic", "pipeline", "synthetic", "takeaways")) source(file.path("R", paste0(f, ".R")))
+is_pdf <- !knitr::is_html_output()
+
+# ---- period and hospital ----
+p_date <- function(x) if (nzchar(as.character(x))) as.Date(as.character(x)) else NULL
+if (!is.null(p_date(params$start_date)) && !is.null(p_date(params$end_date))) {
+  start <- p_date(params$start_date); end <- p_date(params$end_date)
+} else {
+  m1 <- if (nzchar(params$month)) as.Date(paste0(params$month, "-01")) else floor_date(Sys.Date(), "month") %m-% months(1)
+  start <- m1; end <- ceiling_date(m1, "month") - 1
+}
+h_par <- trimws(as.character(params$hospital %||% ""))
+hospital <- if (!length(h_par) || !nzchar(h_par) || tolower(h_par) %in% c("all", "network")) NULL else h_par
+x <- load_report_data(params$source, start, end, hospital, cache = params$cache)
+
+# ---- cell formatting ----
+col_good <- "#c9ebcc"; col_caution <- "#ffe1a6"; col_critical <- "#f6c1c1"; col_none <- "#ececec"
+band <- function(p) ifelse(is.na(p), col_none, ifelse(p >= params$good, col_good, ifelse(p >= params$caution, col_caution, col_critical)))
+cell <- function(pct, nd, ne, disabled = FALSE) {
+  disabled <- rep_len(disabled, length(pct))   # ifelse() returns the length of its test: keep it vector-length
+  txt  <- ifelse(disabled, "–", ifelse(ne == 0, "–", paste0(floor(pct * 100), "%")))   # floor: never 100% with gaps
+  sub  <- ifelse(disabled | ne == 0, "", paste0(nd, "/", ne))
+  fill <- ifelse(disabled | ne == 0, col_none, band(pct))
+  if (is_pdf) {
+    paste0("`#box(fill: rgb(\"", fill, "\"), inset: (x: 3pt, y: 2pt), radius: 2pt, width: 100%)[#align(center)[*", txt,
+           "*", ifelse(nzchar(sub), paste0(" #linebreak() #text(size: 6pt)[", sub, "]"), ""), "]]`{=typst}")
+  } else {
+    paste0("<div style=\"background:", fill, ";border-radius:3px;padding:2px 4px;text-align:center;min-width:52px\"><b>", txt,
+           "</b>", ifelse(nzchar(sub), paste0("<br><span style=\"font-size:0.75em;color:#3b3b3b\">", sub, "</span>"), ""), "</div>")
+  }
+}
+chip <- function(fill, label) if (is_pdf)
+  paste0("`#box(fill: rgb(\"", fill, "\"), inset: (x: 4pt, y: 1pt), radius: 2pt)[", label, "]`{=typst}") else
+  paste0("<span style=\"background:", fill, ";border-radius:3px;padding:1px 6px\">", label, "</span>")
+md_table <- function(df, align, widths) {
+  al <- strsplit(align, "")[[1]]
+  dash <- mapply(function(w, a) { d <- strrep("-", w); if (a == "r") paste0(substr(d, 2, w), ":") else if (a == "c") paste0(":", substr(d, 3, w), ":") else paste0(":", substr(d, 2, w)) }, widths, al)
+  esc <- function(v) gsub("@", "\\@", gsub("|", "\\|", ifelse(is.na(v), "", as.character(v)), fixed = TRUE), fixed = TRUE)
+  body <- apply(df, 1, function(r) paste0("| ", paste(esc(r), collapse = " | "), " |"))
+  knitr::asis_output(paste(c("", paste0("| ", paste(names(df), collapse = " | "), " |"),
+                             paste0("|", paste(dash, collapse = "|"), "|"), body, ""), collapse = "\n"))
+}
+
+# ---- week column labels, clipped to the period ----
+wk_lab <- vapply(seq_along(x$weeks), function(i) {
+  a <- max(x$weeks[i], start); b <- min(x$weeks[i] + 6, end)
+  paste0("W", isoweek(x$weeks[i]), if (is_pdf) " " else "<br>",
+         if (format(a, "%b") == format(b, "%b")) paste0(format(a, "%d"), "–", format(b, "%d %b")) else paste0(format(a, "%d %b"), "–", format(b, "%d %b")))
+}, "")
+disabled_rows <- x$rv$row[vapply(x$rv$fields_list, function(fs) {
+  any(x$doc$disabled[x$doc$row %in% x$rv$row[vapply(x$rv$fields_list, identical, TRUE, fs)]]) }, TRUE)]
+```
+
+::: {.callout-note appearance="simple"}
+**Hospital:** `r x$hospital` · **Period:** `r period_name(start, end)` · **Mothers recorded in REDCap:** `r x$n_mothers` (`r x$n_mothers_prior` in `r period_name(x$prior_start, x$prior_end)`)`r if (x$source == "synthetic") " · **SYNTHETIC TEST DATA: not real**" else ""`
+
+Each cell is the **% of mothers whose record documents the variable**, with *documented / expected* underneath. A variable is expected only where REDCap would show it, e.g. *referral type* only for referred mothers. `r chip(col_good, paste0("≥ ", params$good * 100, "% optimal"))` `r chip(col_caution, paste0(params$caution * 100, "–", params$good * 100 - 1, "% needs attention"))` `r chip(col_critical, paste0("< ", params$caution * 100, "% requires immediate action"))` `r chip(col_none, "– not expected that week / form disabled")`
+:::
+
+## Key takeaways for action
+
+```{r takeaways}
+#| results: asis
+cat(paste0("- ", build_takeaways(x, good = params$good, caution = params$caution), "\n"), sep = "")
+```
+
+## Weekly documentation
+
+```{r table}
+tb <- x$table |> left_join(x$rv |> select(row, section, label), by = "row") |>
+  mutate(disabled = row %in% disabled_rows, txt = cell(pct, n_documented, n_expected, disabled))
+wide <- tb |> select(row, section, label, week, txt) |>
+  pivot_wider(names_from = week, values_from = txt) |> arrange(row)
+period <- tb |> group_by(row) |> summarise(nd = sum(n_documented), ne = sum(n_expected), disabled = any(disabled), .groups = "drop") |>
+  mutate(Period = ifelse(disabled, if (is_pdf) "`#box(fill: rgb(\"#ececec\"), inset: 3pt, radius: 2pt)[Form disabled]`{=typst}" else
+                           "<div style=\"background:#ececec;border-radius:3px;padding:2px 4px;text-align:center\">Form disabled</div>",
+                         cell(ifelse(ne > 0, nd / ne, NA), nd, ne)))
+wide <- wide |> left_join(period |> select(row, Period), by = "row")
+names(wide)[match(as.character(x$weeks), names(wide))] <- wk_lab
+
+mothers <- c("Mothers admitted", vapply(x$weeks, function(w) as.character(x$mothers_by_week$n[x$mothers_by_week$week == w]), ""), as.character(x$n_mothers))
+out <- wide |> select(-row, -section) |> rename(Variable = label)
+out <- rbind(setNames(as.list(mothers), names(out)), out)
+
+if (is_pdf) {
+  secs <- c("", wide$section)
+  pdf_rows <- list(); prev <- ""
+  for (i in seq_len(nrow(out))) {
+    if (nzchar(secs[i]) && secs[i] != prev) { pdf_rows[[length(pdf_rows) + 1]] <- c(paste0("**", secs[i], "**"), rep("", ncol(out) - 1)); prev <- secs[i] }
+    r <- unlist(out[i, ]); if (i == 1) r[1] <- "**Mothers admitted**"
+    pdf_rows[[length(pdf_rows) + 1]] <- r
+  }
+  pdf_df <- as.data.frame(do.call(rbind, pdf_rows), stringsAsFactors = FALSE); names(pdf_df) <- names(out)
+  nw <- length(x$weeks)
+  md_table(pdf_df, paste0("l", strrep("c", nw + 1)), c(34, rep(max(8, floor(56 / (nw + 1))), nw + 1)))
+} else {
+  kbl(out, escape = FALSE, align = c("l", rep("c", ncol(out) - 1))) |>
+    kable_styling(bootstrap_options = c("condensed", "hover"), full_width = TRUE, font_size = 13) |>
+    row_spec(1, bold = TRUE, background = "#f4f3ef") |>
+    column_spec(1, width_min = "17em") |>
+    pack_rows(index = c(" " = 1, table(factor(wide$section, levels = unique(wide$section)))))
+}
+```
+
+```{r by-hospital-heading}
+#| results: asis
+if (isTRUE(x$network)) cat("\n## Documentation by hospital\n\n% documented for the whole period, by site. Columns are ordered from highest to lowest overall documentation.\n")
+```
+
+```{r by-hospital}
+if (isTRUE(x$network)) {
+  hosp_cfg <- read_cfg("config/hospitals.csv")
+  bh <- period_summary(x$doc, x$rv, by_hosp = TRUE) |> filter(!is.na(hosp), hosp %in% hosp_cfg$hosp_id)
+  site_order <- bh |> filter(!is.na(ne)) |> group_by(hosp) |> summarise(p = sum(nd) / sum(ne), .groups = "drop") |> arrange(desc(p)) |> pull(hosp)
+  mothers_site <- x$doc |> distinct(record_id, hosp) |> count(hosp)
+  hw <- bh |> mutate(disabled = row %in% disabled_rows,
+                     txt = cell(ifelse(!is.na(ne) & ne > 0, pct, NA), coalesce(nd, 0L), coalesce(ne, 0L), disabled)) |>
+    select(row, section, label, hosp, txt) |>
+    pivot_wider(names_from = hosp, values_from = txt) |> arrange(row)
+  for (h in site_order) if (!h %in% names(hw)) hw[[h]] <- NA
+  hw <- hw |> select(row, section, label, all_of(site_order))
+  hw[is.na(hw)] <- cell(NA, 0L, 0L)
+  hw <- hw |> left_join(period |> select(row, Network = Period), by = "row")
+  short <- setNames(hosp_cfg$short, hosp_cfg$hosp_id)
+  names(hw)[match(site_order, names(hw))] <- short[site_order]
+  top <- c("Mothers", as.character(mothers_site$n[match(site_order, mothers_site$hosp)]), as.character(x$n_mothers))
+  hout <- hw |> select(-row, -section) |> rename(Variable = label)
+  hout <- rbind(setNames(as.list(top), names(hout)), hout)
+  if (is_pdf) {
+    secs <- c("", hw$section); rows <- list(); prev <- ""
+    for (i in seq_len(nrow(hout))) {
+      if (nzchar(secs[i]) && secs[i] != prev) { rows[[length(rows) + 1]] <- c(paste0("**", secs[i], "**"), rep("", ncol(hout) - 1)); prev <- secs[i] }
+      r <- unlist(hout[i, ]); if (i == 1) r[1] <- "**Mothers**"; rows[[length(rows) + 1]] <- r
+    }
+    hdf <- as.data.frame(do.call(rbind, rows), stringsAsFactors = FALSE); names(hdf) <- names(hout)
+    ns <- length(site_order)
+    md_table(hdf, paste0("l", strrep("c", ns + 1)), c(30, rep(max(6, floor(60 / (ns + 1))), ns + 1)))
+  } else {
+    kbl(hout, escape = FALSE, align = c("l", rep("c", ncol(hout) - 1))) |>
+      kable_styling(bootstrap_options = c("condensed", "hover"), full_width = TRUE, font_size = 13) |>
+      row_spec(1, bold = TRUE, background = "#f4f3ef") |>
+      column_spec(1, width_min = "17em") |>
+      pack_rows(index = c(" " = 1, table(factor(hw$section, levels = unique(hw$section)))))
+  }
+}
+```
+
+### Notes
+
+```{r notes}
+#| results: asis
+dis_forms <- gsub("_", " ", x$fdl$disabled)
+cat(sprintf("- **Week** = Monday-start week of the mother's admission date (data-entry date when the admission date is missing). Columns are clipped to the report period, so the first and last weeks can be partial.\n"))
+cat(sprintf("- **Documented** = a real answer. %s counts as documented (it is how *Other* is recorded); %s count as missing.\n",
+            paste(documented_codes, collapse = ", "), paste(setdiff(x$missing_codes, documented_codes), collapse = ", ")))
+cat("- **Decision-to-delivery interval** counts as documented only when all four of the CS decision date, CS decision time, delivery date and delivery time are filled in.\n")
+if (length(dis_forms))
+  cat(sprintf("- **Form disabled:** the REDCap form display logic currently switches off **%s** (condition `1=2`), so their variables cannot be entered and are not expected. These are the report's labour, delivery and outcome sections; re-enabling the forms is the first step to documenting them.\n",
+              paste(dis_forms, collapse = ", ")))
+cat(sprintf("- Source: %s, pulled %s.\n", if (x$source == "redcap") "CIN Standard Maternal Tool (REDCap, via REDCapR)" else "synthetic test data", format(x$pulled_at, "%d %b %Y %H:%M")))
+```

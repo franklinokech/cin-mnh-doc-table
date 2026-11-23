@@ -1,0 +1,3 @@
+# Copy to .Renviron (same folder) and fill in. Do not commit .Renviron.
+REDCAP_URI=https://your-redcap-server/api/
+REDCAP_TOKEN=YOUR_32_CHARACTER_API_TOKEN

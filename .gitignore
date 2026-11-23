@@ -1,0 +1,17 @@
+.Renviron
+.Rhistory
+.RData
+.Rproj.user/
+.quarto/
+*_files/
+doc_table*.html
+doc_table*.pdf
+renv/library/
+.Renviron
+output/
+*.log
+.quarto/
+*_files/
+.Rhistory
+.RData
+.Rproj.user/

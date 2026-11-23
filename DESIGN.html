@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.9.37">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>design</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="DESIGN_files/libs/clipboard/clipboard.min.js"></script>
+<script src="DESIGN_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="DESIGN_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="DESIGN_files/libs/quarto-html/popper.min.js"></script>
+<script src="DESIGN_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="DESIGN_files/libs/quarto-html/anchor.min.js"></script>
+<link href="DESIGN_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="DESIGN_files/libs/quarto-html/quarto-syntax-highlighting-7f8f88aac4f3542376d5c11b86a4c14d.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="DESIGN_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="DESIGN_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="DESIGN_files/libs/bootstrap/bootstrap-b48a07d74ec71823ec6157dac8716dea.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+
+</head>
+
+<body class="fullcontent quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+
+<main class="content" id="quarto-document-content">
+
+
+
+
+<section id="design-cin-mnh-maternity-documentation-report" class="level1">
+<h1>Design: CIN-MNH Maternity Documentation Report</h1>
+<p>This document explains <strong>how the code works and why it works that way</strong>, so it can be maintained and extended safely. For installation and day-to-day use see <a href="README.md">README.md</a>.</p>
+<hr>
+<section id="purpose-and-scope" class="level2">
+<h2 class="anchored" data-anchor-id="purpose-and-scope">1. Purpose and scope</h2>
+<p>The monthly <em>Maternity Newborn Health Report</em> shows large “Missing” proportions for many variables. This tool measures <strong>documentation completeness</strong> for the variables behind that report, week by week, per hospital and for the network. It also turns the results into <strong>actions for sites</strong>.</p>
+<p><strong>In scope:</strong> the % of mothers whose REDCap record documents each key variable; the trend within the period; the comparison with the previous period; a site comparison. <strong>Out of scope:</strong> clinical indicator values (those are in the monthly report), the accuracy of entered values, newborn/NBU data, and risk categorisation, which is derived from about 45 inputs rather than being one variable.</p>
+<p><strong>Users:</strong> the CIN data team, who run it; hospital records and clinical teams, who receive it.</p>
+<hr>
+</section>
+<section id="architecture" class="level2">
+<h2 class="anchored" data-anchor-id="architecture">2. Architecture</h2>
+<pre class="mermaid"><code>flowchart LR
+  A[REDCap PID 80&lt;br/&gt;API] --&gt;|REDCapR: IDs by filter_logic,&lt;br/&gt;then 48 fields| B[get_source_data]
+  S[simulate_records&lt;br/&gt;synthetic] --&gt; B
+  C[(cache .rds&lt;br/&gt;batch only)] --&gt; B
+  B --&gt; D[compute_documentation&lt;br/&gt;current + previous period]
+  CFG[config/*.csv] --&gt; D
+  D --&gt; E[weekly_table&lt;br/&gt;period_summary]
+  E --&gt; F[build_takeaways]
+  E --&gt; G[doc_table.qmd&lt;br/&gt;HTML + Typst PDF]
+  F --&gt; G
+  H[render_batch.R] --&gt;|one pull, saves cache| C
+  H --&gt;|quarto render per hospital + network| G</code></pre>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Module</th>
+<th>Responsibility</th>
+<th>Key functions</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>R/redcap_logic.R</code></td>
+<td>Evaluate REDCap logic (branching, form display, filter) in R with REDCap’s semantics</td>
+<td><code>eval_redcap_logic()</code>, <code>redcap_logic_to_r()</code>, <code>logic_fields()</code>, <code>redcap_datediff()</code></td>
+</tr>
+<tr class="even">
+<td><code>R/pipeline.R</code></td>
+<td>Configuration, API access, expected/documented computation, aggregation</td>
+<td><code>read_form_logic()</code>, <code>fields_needed()</code>, <code>period_filter_logic()</code>, <code>pull_records()</code>, <code>get_source_data()</code>, <code>prior_period()</code>, <code>compute_documentation()</code>, <code>weekly_table()</code>, <code>period_summary()</code>, <code>load_report_data()</code></td>
+</tr>
+<tr class="odd">
+<td><code>R/takeaways.R</code></td>
+<td>Rule-based “Key takeaways for action”</td>
+<td><code>build_takeaways()</code>, <code>period_name()</code></td>
+</tr>
+<tr class="even">
+<td><code>R/synthetic.R</code></td>
+<td>Synthetic REDCap-shaped data obeying the dictionary, branching logic and form display logic</td>
+<td><code>simulate_records()</code></td>
+</tr>
+<tr class="odd">
+<td><code>R/render_batch.R</code></td>
+<td>Batch orchestration: one pull, a report per hospital, the network report, the log</td>
+<td>CLI script</td>
+</tr>
+<tr class="even">
+<td><code>doc_table.qmd</code></td>
+<td>Presentation: callout, takeaways, weekly table, by-hospital table, notes</td>
+<td><code>cell()</code>, <code>md_table()</code>, <code>chip()</code></td>
+</tr>
+</tbody>
+</table>
+<p>The design separates <strong>computation</strong> (<code>R/</code>) from <strong>presentation</strong> (<code>.qmd</code>) and <strong>policy</strong> (<code>config/</code>). Most changes touch only one of the three.</p>
+<hr>
+</section>
+<section id="data-flow-step-by-step" class="level2">
+<h2 class="anchored" data-anchor-id="data-flow-step-by-step">3. Data flow, step by step</h2>
+<ol type="1">
+<li><strong>Period.</strong> The period comes from <code>month</code> (or <code>start_date</code>/<code>end_date</code>). <code>prior_period()</code> derives the comparison window: the previous calendar month for whole-month reports, otherwise the same length immediately before.</li>
+<li><strong>Fields.</strong> <code>fields_needed()</code> starts from the report variables, the record ID, <code>hosp_id</code>, <code>admission_date</code> and <code>datetime_entry</code>. It then <strong>recursively</strong> adds every field referenced by their branching logic and by the form display logic of their forms, because expected-ness can’t be evaluated without them. Today that’s 48 fields, none of them identifiers.</li>
+<li><strong>Pull</strong> (two steps, <code>pull_records()</code>):
+<ol type="1">
+<li>Export only record IDs with <code>filter_logic = period_filter_logic(start, end, hospital)</code>, so REDCap selects the hospital and window on the server.</li>
+<li>Export the needed fields for those IDs (<code>batch_size = 500</code>).</li>
+</ol>
+Selecting IDs first and then pulling by ID gives the same result whatever REDCap does with filter logic on repeating rows.</li>
+<li><strong>Compute</strong> (<code>compute_documentation()</code>), run once for the current period and once for the previous one. The previous period is used only by the takeaways.
+<ul>
+<li>Keep non-repeating rows only, since all report variables are on non-repeating forms.</li>
+<li>Anchor = <code>admission_date</code>, else <code>datetime_entry</code>; then re-apply the period and hospital filter in R. This is the safety net behind the server filter, and the only filter for synthetic data.</li>
+<li>For each report row and mother: <code>expected = expected_when ∧ ⋀(form display logic ∧ branching logic)</code> over the row’s fields; <code>documented = ⋀ is_documented(field)</code>.</li>
+<li>Output, a long table: <code>row, record_id, hosp, week, expected, documented, disabled</code>.</li>
+</ul></li>
+<li><strong>Aggregate.</strong> <code>weekly_table()</code> sums by row and week, then fills every row × week with zeros, so empty weeks show “–”. <code>period_summary()</code> gives row totals, optionally by hospital.</li>
+<li><strong>Takeaways.</strong> <code>build_takeaways()</code> applies the rules in §7.</li>
+<li><strong>Render.</strong> <code>doc_table.qmd</code> formats cells as HTML <code>&lt;div&gt;</code>s or as raw Typst boxes inside markdown tables.</li>
+</ol>
+<section id="data-contract-the-object-returned-by-load_report_data" class="level3">
+<h3 class="anchored" data-anchor-id="data-contract-the-object-returned-by-load_report_data">Data contract: the object returned by <code>load_report_data()</code></h3>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Element</th>
+<th>Content</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>doc</code>, <code>prior_doc</code></td>
+<td>Long tables (step 4) for the current and previous periods</td>
+</tr>
+<tr class="even">
+<td><code>table</code></td>
+<td><code>row, week, n_expected, n_documented, pct</code></td>
+</tr>
+<tr class="odd">
+<td><code>rv</code></td>
+<td>Report variables (+ <code>row</code>, <code>fields_list</code>)</td>
+</tr>
+<tr class="even">
+<td><code>fdl</code></td>
+<td><code>logic</code> (combined form display logic per form), <code>disabled</code> (form names)</td>
+</tr>
+<tr class="odd">
+<td><code>weeks</code>, <code>mothers_by_week</code>, <code>n_mothers</code>, <code>n_mothers_prior</code></td>
+<td>Denominators</td>
+</tr>
+<tr class="even">
+<td><code>network</code>, <code>hospital</code>, <code>hosp_labels</code></td>
+<td>Mode and labels</td>
+</tr>
+<tr class="odd">
+<td><code>start</code>, <code>end</code>, <code>prior_start</code>, <code>prior_end</code>, <code>source</code>, <code>pulled_at</code>, <code>missing_codes</code></td>
+<td>Metadata</td>
+</tr>
+</tbody>
+</table>
+<hr>
+</section>
+</section>
+<section id="key-design-decisions" class="level2">
+<h2 class="anchored" data-anchor-id="key-design-decisions">4. Key design decisions</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>#</th>
+<th>Decision</th>
+<th>Why</th>
+<th>Alternatives rejected</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>D1</td>
+<td><strong>Denominator = mothers for whom REDCap would show the question</strong> (form display logic ∧ branching)</td>
+<td>Otherwise conditional fields look falsely incomplete. Example: <em>referral type</em> for non-referred mothers.</td>
+<td>Counting all mothers for every variable</td>
+</tr>
+<tr class="even">
+<td>D2</td>
+<td><strong>Multiple display rules for one form combine with OR</strong></td>
+<td>REDCap documents that a form listed in several conditions is enabled if <em>any</em> is true. Our form display logic export lists Labour Monitoring, Uterotonic Details and Newborn Discharge Summary twice.</td>
+<td>AND, which would misclassify those forms</td>
+</tr>
+<tr class="odd">
+<td>D3</td>
+<td><strong>A form whose rules are all constant-false (<code>1=2</code>) is “disabled”; its rows show “Form disabled”, not 0%</strong></td>
+<td>Chosen by the CIN team: a blocked form is a configuration issue, not a documentation failure by the site. It is still flagged in the takeaways for the CIN data team.</td>
+<td>Counting the rows as missing</td>
+</tr>
+<tr class="even">
+<td>D4</td>
+<td><strong><code>OTH</code> counts as documented; <code>NI, INV, UNK, NA, ND, QI</code> count as missing</strong></td>
+<td>Chosen by the CIN team. <code>OTH</code> is how “Other (specify)” is stored, so it’s an answer.</td>
+<td>Treating ND/NA as answers too</td>
+</tr>
+<tr class="odd">
+<td>D5</td>
+<td><strong>Week = Monday-start week of <code>admission_date</code>, falling back to <code>datetime_entry</code></strong></td>
+<td>Every mother has an admission date in principle. The fallback keeps mothers with a missing admission date in the denominator instead of silently dropping them.</td>
+<td>Delivery date: on the disabled Delivery Details form, so often blank</td>
+</tr>
+<tr class="even">
+<td>D6</td>
+<td><strong>Server-side selection by <code>filter_logic</code>, then the same rule re-applied in R</strong></td>
+<td>Less data transferred, and correct even if server and R disagree at the edges. The upper bound is “before midnight of the next day”, so a date-<em>time</em> on the last day is included (this was a real bug, now covered by a test).</td>
+<td>Pulling everything and filtering in R (slow, more data)</td>
+</tr>
+<tr class="odd">
+<td>D7</td>
+<td><strong>One REDCap pull per batch, shared through a temporary <code>.rds</code> file, deleted on exit</strong></td>
+<td>11 hospitals × 2 formats would otherwise mean 22 identical pulls. The file holds record-level data, so it’s removed straight away.</td>
+<td>One pull per render</td>
+</tr>
+<tr class="even">
+<td>D8</td>
+<td><strong>Percentages are rounded down</strong></td>
+<td>A cell or takeaway must never read 100% while gaps exist.</td>
+<td>Normal rounding</td>
+</tr>
+<tr class="odd">
+<td>D9</td>
+<td><strong>Takeaways are deterministic rules, not free text</strong></td>
+<td>The same data always gives the same message. They are auditable and testable, and the wording is kept in config.</td>
+<td>Hand-written commentary (doesn’t scale to 11 sites a month)</td>
+</tr>
+<tr class="even">
+<td>D10</td>
+<td><strong>Only pull the fields needed; never names, phones or ID numbers</strong></td>
+<td>Data minimisation. The reports contain counts only.</td>
+<td>Exporting whole forms</td>
+</tr>
+<tr class="odd">
+<td>D11</td>
+<td><strong>PDF via Typst, not LaTeX</strong></td>
+<td>Ships with Quarto, so there’s nothing extra to install. Raw Typst inside markdown tables gives coloured cells.</td>
+<td>LaTeX (heavy install on Windows)</td>
+</tr>
+<tr class="even">
+<td>D12</td>
+<td><strong>Configuration in CSV</strong></td>
+<td>The variables, actions and hospitals change more often than the logic, and non-programmers can edit them.</td>
+<td>Hard-coded lists</td>
+</tr>
+</tbody>
+</table>
+<hr>
+</section>
+<section id="redcap-logic-engine-rredcap_logic.r" class="level2">
+<h2 class="anchored" data-anchor-id="redcap-logic-engine-rredcap_logic.r">5. REDCap logic engine (<code>R/redcap_logic.R</code>)</h2>
+<p>Branching logic, form display logic and filter logic are translated to R and evaluated on the whole data frame at once.</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>REDCap</th>
+<th>R translation / behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>[field]</code></td>
+<td><code>.v('field')</code> returns the column wrapped as class <code>rcval</code></td>
+</tr>
+<tr class="even">
+<td><code>[cb(code)]</code></td>
+<td><code>.v('cb___code')</code> (checkbox column, code lower-cased as in exports)</td>
+</tr>
+<tr class="odd">
+<td><code>=</code> <code>&lt;&gt;</code></td>
+<td>Numeric comparison when both sides look numeric, else text. <strong>A blank compares as <code>""</code></strong>, so <code>[x] &lt;&gt; '0'</code> is TRUE when x is blank, exactly as in REDCap.</td>
+</tr>
+<tr class="even">
+<td><code>&lt;</code> <code>&gt;</code> <code>&lt;=</code> <code>&gt;=</code></td>
+<td>Numeric; a blank or non-numeric side gives FALSE</td>
+</tr>
+<tr class="odd">
+<td><code>and</code> / <code>or</code> / <code>( )</code></td>
+<td><code>&amp;</code> / <code>\|</code> / brackets</td>
+</tr>
+<tr class="even">
+<td><code>+ - * /</code></td>
+<td>Numeric; a blank gives blank</td>
+</tr>
+<tr class="odd">
+<td><code>datediff(d1, d2, unit, signed)</code></td>
+<td><code>d2 − d1</code> in <code>y, M, d, h, m, s</code>; accepts <code>'today'</code>, <code>'now'</code> and mixed date/datetime formats</td>
+</tr>
+<tr class="even">
+<td><code>isblankormissingcode()</code>, <code>left()</code>, <code>right()</code>, <code>contains()</code>, <code>upper()</code>, <code>lower()</code>, <code>trim()</code></td>
+<td>Implemented</td>
+</tr>
+</tbody>
+</table>
+<p>Comparison semantics live in <code>Ops.rcval</code>, registered with <code>registerS3method()</code> so they work wherever the file is sourced. If the logic can’t be parsed, the error shows both the original and the translated expression.</p>
+<p><strong>Limitations:</strong> smart variables (<code>[event-name]</code>, <code>[record-dag-name]</code>), <code>if()</code>, <code>sum()</code> and cross-event references aren’t implemented. None of them are used by the fields this report needs. If a future field uses one, <code>eval_redcap_logic()</code> will stop with an error naming the logic, rather than giving a silently wrong result.</p>
+<hr>
+</section>
+<section id="presentation-doc_table.qmd" class="level2">
+<h2 class="anchored" data-anchor-id="presentation-doc_table.qmd">6. Presentation (<code>doc_table.qmd</code>)</h2>
+<ul>
+<li><strong>Cells:</strong> <code>cell(pct, nd, ne, disabled)</code> returns an HTML <code>&lt;div&gt;</code> or a raw Typst <code>#box(fill: …)</code> with the % and <em>nd/ne</em>. The colour comes from <code>band()</code> using <code>good</code> / <code>caution</code>. Grey means not expected or disabled.</li>
+<li><strong>PDF tables:</strong> <code>md_table()</code> writes pandoc pipe tables with explicit column widths, taken from the dash counts. It escapes <code>|</code> and <code>@</code>; otherwise pandoc reads <code>@word</code> as a citation and the Typst build fails.</li>
+<li><strong>HTML tables:</strong> kableExtra with <code>pack_rows()</code> for section headers.</li>
+<li><strong>Week labels:</strong> <code>W&lt;iso week&gt; dd–dd Mon</code>, clipped to the period.</li>
+<li><strong>Page setup:</strong> <code>page.typ</code> (A4 landscape) is passed to Typst as a template partial.</li>
+</ul>
+<hr>
+</section>
+<section id="takeaway-rules-rtakeaways.r" class="level2">
+<h2 class="anchored" data-anchor-id="takeaway-rules-rtakeaways.r">7. Takeaway rules (<code>R/takeaways.R</code>)</h2>
+<p>Defaults: <code>min_n = 10</code> (a variable is named only if ≥ 10 mothers were expected to have it), <code>change_pp = 10</code>, <code>max_items = 3</code>. The rows on disabled forms are excluded from every calculation except rule 7.</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>#</th>
+<th>Rule</th>
+<th>Fires when</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>Overall level and change</td>
+<td>Always. Pooled nd/ne, compared with the previous period if it has data. Level wording follows <code>good</code> / <code>caution</code>.</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>Requires immediate action</td>
+<td>Variables with pct &lt; <code>caution</code>, lowest first. Or, if none and overall ≥ <code>good</code>, a “keep it up” message.</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>Dropped / Improved</td>
+<td>|Δ| ≥ <code>change_pp</code> vs the previous period (both periods ≥ <code>min_n</code>)</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td>Weakest section(s)</td>
+<td>Up to 2 sections with pct &lt; <code>good</code> and <strong>≥ 2 variables</strong>, with their action from <code>section_actions.csv</code>. A single-variable section would only repeat rule 2.</td>
+</tr>
+<tr class="odd">
+<td>5</td>
+<td>Data-entry volume</td>
+<td>Latest week &lt; 50% of the median of earlier weeks (median ≥ 5), or weeks with zero mothers</td>
+</tr>
+<tr class="even">
+<td>6a</td>
+<td>No hospital recorded <em>(network)</em></td>
+<td>Mothers whose <code>hosp_id</code> isn’t a known code (blank or a missing code). They’re in the network totals but no site report.</td>
+</tr>
+<tr class="odd">
+<td>6b</td>
+<td>Site ranking <em>(network)</em></td>
+<td>≥ 2 sites: the highest site, and up to 3 lowest sites below <code>good</code></td>
+</tr>
+<tr class="even">
+<td>6c</td>
+<td>Network-wide gaps <em>(network)</em></td>
+<td>Variables below <code>caution</code> in ≥ 50% of sites (each with ≥ <code>min_n</code>)</td>
+</tr>
+<tr class="odd">
+<td>7</td>
+<td>Disabled forms</td>
+<td>Any report row on a disabled form; addressed to the CIN data team</td>
+</tr>
+</tbody>
+</table>
+<p>Minus signs are the true minus character (<code>−</code>). The output is UTF-8 throughout.</p>
+<hr>
+</section>
+<section id="privacy-and-security" class="level2">
+<h2 class="anchored" data-anchor-id="privacy-and-security">8. Privacy and security</h2>
+<ul>
+<li><strong>Credentials:</strong> only in <code>.Renviron</code> (git-ignored); never in code or reports.</li>
+<li><strong>Pulled fields:</strong> 48, none of them identifiers. The token must not be <em>De-Identified</em> (that strips dates), but it never needs identifier fields.</li>
+<li><strong>Reports:</strong> contain counts and percentages only, no record IDs or patient details. They are safe to email to hospitals.</li>
+<li><strong>Batch cache:</strong> record-level, written to the system temp folder and deleted when the batch exits (<code>on.exit</code>).</li>
+</ul>
+<hr>
+</section>
+<section id="known-limitations-and-open-issues" class="level2">
+<h2 class="anchored" data-anchor-id="known-limitations-and-open-issues">9. Known limitations and open issues</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Item</th>
+<th>Effect</th>
+<th>Possible extension</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Delivery Details, Post Delivery and Newborn Details are disabled (<code>1=2</code>)</td>
+<td>9 of 41 rows show “Form disabled”</td>
+<td>Re-enable them in REDCap and re-export <code>form_display_logic.csv</code>; no code change needed</td>
+</tr>
+<tr class="even">
+<td>Report variables must be on <strong>non-repeating</strong> forms</td>
+<td><code>compute_documentation()</code> warns if one isn’t</td>
+<td>For a repeating form, expand to one row per instance and decide the denominator (per instance or per mother)</td>
+</tr>
+<tr class="odd">
+<td>Risk categorisation (report §8.1) not included</td>
+<td>—</td>
+<td>Add a derived “risk inputs documented” row via <code>fields</code> = all inputs</td>
+</tr>
+<tr class="even">
+<td>Partial first and last weeks</td>
+<td>Small denominators at the edges</td>
+<td>Already shown via <em>nd/ne</em>; could hide weeks under N mothers</td>
+</tr>
+<tr class="odd">
+<td><code>hosp_id</code> blank or a missing code</td>
+<td>The mother appears only in the network report</td>
+<td>Flagged by takeaway 6a</td>
+</tr>
+<tr class="even">
+<td>Form display logic isn’t available through the API</td>
+<td><code>config/form_display_logic.csv</code> must be re-exported by hand when it changes</td>
+<td>Read it with the REDCap project XML export</td>
+</tr>
+<tr class="odd">
+<td>Takeaway thresholds are global</td>
+<td>The same rules for every site</td>
+<td>Per-site targets in <code>hospitals.csv</code></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</section>
+<section id="testing-strategy" class="level2">
+<h2 class="anchored" data-anchor-id="testing-strategy">10. Testing strategy</h2>
+<ul>
+<li><strong>Independent recomputation:</strong> <code>test_pipeline.R</code> recalculates expected and documented counts straight from the raw export for rows with and without branching logic, and compares them with the pipeline.</li>
+<li><strong>Rule checks:</strong> disabled-form detection (OR semantics), the OTH/ND rule, cell text (a regression test for a real bug where every Period cell showed the first row’s %), and takeaway numbers against the table.</li>
+<li><strong>Live path without a server:</strong> <code>test_live_path.R</code> replaces REDCapR’s functions with a stand-in that evaluates the real filter logic, checks the result equals the synthetic run, and checks the period boundary.</li>
+<li><strong>Synthetic data</strong> respects the dictionary, branching logic and form display logic, varies by hospital and week, and includes missing codes, so every code path is exercised without real patient data.</li>
+</ul>
+<p><strong>Before releasing a change:</strong> run both tests and a synthetic batch, open one site PDF and the network PDF, then <code>renv::snapshot()</code>.</p>
+<hr>
+</section>
+<section id="extension-guide" class="level2">
+<h2 class="anchored" data-anchor-id="extension-guide">11. Extension guide</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>You want to…</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Add or remove a variable</td>
+<td><code>config/report_variables.csv</code></td>
+</tr>
+<tr class="even">
+<td>Require several fields together (like DDI)</td>
+<td><code>fields = a\|b\|c</code> in <code>report_variables.csv</code></td>
+</tr>
+<tr class="odd">
+<td>Restrict a row’s denominator</td>
+<td><code>expected_when</code> column (REDCap logic)</td>
+</tr>
+<tr class="even">
+<td>Change colours or thresholds</td>
+<td><code>params</code> in <code>doc_table.qmd</code> (<code>good</code>, <code>caution</code>) and <code>col_*</code> in its setup chunk</td>
+</tr>
+<tr class="odd">
+<td>Add a takeaway rule</td>
+<td><code>build_takeaways()</code>: append to <code>out</code>, and add a test in <code>test_pipeline.R</code></td>
+</tr>
+<tr class="even">
+<td>Change how missing codes count</td>
+<td><code>documented_codes</code> in <code>R/pipeline.R</code></td>
+</tr>
+<tr class="odd">
+<td>Add an output format (e.g.&nbsp;Word)</td>
+<td>Add a <code>docx:</code> format to <code>doc_table.qmd</code>, and branch <code>cell()</code> / <code>md_table()</code> (<code>is_pdf</code>) for it</td>
+</tr>
+<tr class="even">
+<td>Report another REDCap project</td>
+<td>New <code>config/</code> files, and adapt <code>fields_needed()</code> anchors (<code>admission_date</code>, <code>datetime_entry</code>, <code>hosp_id</code>)</td>
+</tr>
+</tbody>
+</table>
+<hr>
+</section>
+<section id="glossary" class="level2">
+<h2 class="anchored" data-anchor-id="glossary">12. Glossary</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>FDL</td>
+<td>Form display logic: REDCap rules that enable or disable whole forms</td>
+</tr>
+<tr class="even">
+<td>Branching logic</td>
+<td>Field-level REDCap rule deciding whether a question is shown</td>
+</tr>
+<tr class="odd">
+<td>Missing data codes</td>
+<td>Project codes entered instead of a value: NI, INV, UNK, OTH, NA, ND, QI</td>
+</tr>
+<tr class="even">
+<td>pp</td>
+<td>Percentage points</td>
+</tr>
+<tr class="odd">
+<td>DDI</td>
+<td>Decision-to-delivery interval (CS)</td>
+</tr>
+<tr class="even">
+<td>Network report</td>
+<td><code>hospital = all</code>: every mother in the period, including those with no hospital recorded</td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

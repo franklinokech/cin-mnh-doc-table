@@ -1,0 +1,11 @@
+form_name,control_condition,apply_to_data_entry,apply_to_survey_autocontinue,apply_to_mycap_tasks
+uterotonic_details,"[is_uterotonic_used] = '1'",y,n,n
+labour_and_delivery_monitoring,"[is_monitoring_chart] = '1'",y,n,n
+newborn_discharge_summary,"[has_baby_nbu_nicu] = '1'",y,n,n
+previous_pregnancy_details,"[is_prev_preg_filled] = '1'",y,n,n
+labour_and_delivery_monitoring,1=2,y,n,n
+delivery_details,1=2,y,n,n
+uterotonic_details,1=2,y,n,n
+post_delivery,1=2,y,n,n
+newborn_details,1=2,y,n,n
+newborn_discharge_summary,1=2,y,n,n

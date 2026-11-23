@@ -217,6 +217,24 @@ load_report_data <- function(source = c("redcap", "synthetic"), start, end, hosp
        pulled_at = src$pulled_at, missing_codes = src$missing_codes)
 }
 
+#' Mothers per week, with how many report days each week covers and a "low" flag.
+#' Weeks are compared by daily rate, not raw count, so a first/last week clipped to
+#' the period (e.g. Thu 1 Oct - Sun 4 Oct) is not flagged just for being short.
+#' Low = no mothers, or under `low_ratio` of the typical (median full-week) rate,
+#' once the typical week has at least `min_typical` mothers.
+#' Used by both the admissions chart and the takeaways, so they always agree.
+weekly_volume <- function(x, low_ratio = 0.5, min_typical = 5) {
+  mb <- x$mothers_by_week
+  days <- as.integer(pmin(mb$week + 6, x$end) - pmax(mb$week, x$start)) + 1L
+  full <- days == 7
+  rate <- mb$n / days
+  typical <- 7 * median(rate[if (any(full)) full else TRUE])   # mothers in a typical full week
+  expected <- typical * days / 7                               # scaled to the days each week covers
+  low <- mb$n == 0 | (typical >= min_typical & mb$n < low_ratio * expected)
+  tibble(week = mb$week, n = mb$n, days = days, partial = !full,
+         typical = typical, expected = expected, low = low)
+}
+
 #' Period summary per report row (optionally per hospital)
 period_summary <- function(doc, rv, by_hosp = FALSE) {
   g <- if (by_hosp) c("row", "hosp") else "row"

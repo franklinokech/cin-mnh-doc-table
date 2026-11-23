@@ -34,7 +34,7 @@ execute:
 
 ```{r setup}
 #| include: false
-suppressPackageStartupMessages({ library(dplyr); library(tidyr); library(knitr); library(kableExtra); library(lubridate) })
+suppressPackageStartupMessages({ library(dplyr); library(tidyr); library(knitr); library(kableExtra); library(lubridate); library(ggplot2) })
 for (f in c("redcap_logic", "pipeline", "synthetic", "takeaways")) source(file.path("R", paste0(f, ".R")))
 is_pdf <- !knitr::is_html_output()
 
@@ -99,6 +99,41 @@ Each cell is the **% of mothers whose record documents the variable**, with *doc
 ```{r takeaways}
 #| results: asis
 cat(paste0("- ", build_takeaways(x, good = params$good, caution = params$caution), "\n"), sep = "")
+```
+
+## Admissions per week
+
+Mothers recorded in REDCap each week. The dashed line is a typical week, scaled down for partial weeks at the start and end of the period; **red bars** are under half of typical, which usually means files have not been entered yet.
+
+```{r admissions-chart}
+#| fig-width: 8
+#| fig-height: 2.2
+#| fig-dpi: 200
+#| fig-alt: "Bar chart of mothers recorded per week, with low weeks highlighted in red"
+vol <- weekly_volume(x) |>
+  mutate(i = row_number(),
+         lab = paste0("W", isoweek(week), "\n", format(pmax(week, start), "%d %b")),
+         status = factor(ifelse(low, "Low", ifelse(partial, "Partial week", "Typical")),
+                         levels = c("Typical", "Partial week", "Low")),
+         inside = n >= 0.2 * max(n, expected),   # label inside the bar unless it is too short
+         ink = ifelse(n == 0, "#c0392b", ifelse(inside & !(partial & !low), "white", "#3b3b3b")),
+         txt = ifelse(partial, paste0(n, " (", days, "d)"), as.character(n)))
+ggplot(vol, aes(i, n)) +
+  geom_col(aes(fill = status), width = 0.7) +
+  geom_segment(aes(x = i - 0.42, xend = i + 0.42, y = expected, yend = expected),
+               linetype = "dashed", linewidth = 0.4, colour = "#3b3b3b") +
+  geom_text(aes(y = ifelse(inside, n, pmax(n, expected)), label = txt, vjust = ifelse(inside, 1.5, -0.4),
+                colour = ink, fontface = ifelse(n == 0, "bold", "plain")), size = 3) +
+  scale_colour_identity() +
+  scale_fill_manual(values = c(Typical = "#5b7fa6", `Partial week` = "#a9bfd6", Low = "#c0392b"),
+                    labels = c(Typical = "Typical", `Partial week` = "Partial week (fewer days)",
+                               Low = "Low: under half of typical"), drop = FALSE, name = NULL) +
+  scale_x_continuous(breaks = vol$i, labels = vol$lab, expand = expansion(add = 0.4)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.25))) +
+  labs(x = NULL, y = "Mothers") +
+  theme_minimal(base_size = 9) +
+  theme(legend.position = "top", legend.justification = "left", legend.key.size = unit(8, "pt"),
+        panel.grid.major.x = element_blank(), panel.grid.minor = element_blank())
 ```
 
 ## Weekly documentation
@@ -190,6 +225,7 @@ dis_forms <- gsub("_", " ", x$fdl$disabled)
 cat(sprintf("- **Week** = Monday-start week of the mother's admission date (data-entry date when the admission date is missing). Columns are clipped to the report period, so the first and last weeks can be partial.\n"))
 cat(sprintf("- **Documented** = a real answer. %s counts as documented (it is how *Other* is recorded); %s count as missing.\n",
             paste(documented_codes, collapse = ", "), paste(setdiff(x$missing_codes, documented_codes), collapse = ", ")))
+cat("- **Admissions per week:** a week is *low* when it has no mothers, or fewer than half of a typical week (the median of the full weeks, scaled to the days a partial week covers).\n")
 cat("- **Decision-to-delivery interval** counts as documented only when all four of the CS decision date, CS decision time, delivery date and delivery time are filled in.\n")
 if (length(dis_forms))
   cat(sprintf("- **Form disabled:** the REDCap form display logic currently switches off **%s** (condition `1=2`), so their variables cannot be entered and are not expected. These are the report's labour, delivery and outcome sections; re-enabling the forms is the first step to documenting them.\n",

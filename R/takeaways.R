@@ -71,16 +71,23 @@ build_takeaways <- function(x, good = .90, caution = .70, min_n = 10, change_pp 
   }
 
   # 5. data-entry volume
-  mb <- x$mothers_by_week
-  if (nrow(mb) >= 3) {
-    typical <- median(head(mb$n, -1))
-    last <- tail(mb$n, 1)
-    if (typical >= 5 && last < 0.5 * typical)
-      out <- c(out, paste0("**Fewer records in the latest week** (", last, " vs a typical ", typical,
+  # same rule as the admissions chart (weekly_volume): partial weeks judged per day
+  vol <- weekly_volume(x)
+  if (nrow(vol) >= 3) {
+    wks <- function(v) paste0("W", isoweek(v$week), collapse = ", ")
+    last <- tail(vol, 1)
+    if (last$low && last$n > 0)
+      out <- c(out, paste0("**Fewer records in the latest week** (", last$n, " vs about ", round(last$expected), " expected",
+                           if (last$partial) paste0(" for its ", last$days, " day", if (last$days > 1) "s" else "", " in the period") else "",
                            "): data entry may be behind, so the latest figures may still change. **Action:** clear the data-entry backlog."))
-    empty <- mb$week[mb$n == 0]
-    if (length(empty)) out <- c(out, paste0("**No mothers recorded in ", paste0("W", isoweek(empty), collapse = ", "),
-                                            ".** **Action:** check that all files for those weeks have been entered."))
+    mid <- head(vol, -1) |> filter(low, n > 0)
+    if (nrow(mid)) out <- c(out, paste0("**Low admissions in ", wks(mid), "** (under half the typical ", round(vol$typical[1]),
+                                        " a week). **Action:** check that all files for ", if (nrow(mid) > 1) "those weeks" else "that week",
+                                        " have been entered."))
+    empty <- vol |> filter(n == 0)
+    if (nrow(empty)) out <- c(out, paste0("**No mothers recorded in ", wks(empty),
+                                          ".** **Action:** check that all files for ", if (nrow(empty) > 1) "those weeks" else "that week",
+                                          " have been entered."))
   }
 
   # 6. network: ranking and shared gaps
